@@ -13,7 +13,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
-# Safety check to prevent the "NoneType" TokenValidationError
+# Safety check to prevent the bot from crashing silently if variables are missing
 if not BOT_TOKEN:
     logging.error("CRITICAL ERROR: BOT_TOKEN is missing! Please add it to your Railway variables.")
     sys.exit(1)
@@ -96,7 +96,11 @@ async def evaluate_essay(message: types.Message):
         
     except Exception as e:
         logging.error(f"Error grading essay: {e}")
-        await message.reply("Sorry, I ran into an issue grading your essay. Please try again.")
+        # Custom error handling for Gemini API high-demand spikes
+        if "503" in str(e) or "demand" in str(e).lower():
+            await message.reply("The AI grader is currently experiencing high demand. Please wait 60 seconds and try sending your essay again.")
+        else:
+            await message.reply("Sorry, I ran into an issue grading your essay. Please try again.")
 
 async def main():
     # Start the bot using Long Polling
