@@ -4,48 +4,74 @@ import sys
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from google import genai
 
-# Enable logging so we can see errors in Railway's dashboard
+# Enable logging
 logging.basicConfig(level=logging.INFO)
 
-# Pull API keys from Railway's Environment Variables
+# Pull variables from Railway
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME") 
 
-# Safety check to prevent the bot from crashing silently if variables are missing
-if not BOT_TOKEN:
-    logging.error("CRITICAL ERROR: BOT_TOKEN is missing! Please add it to your Railway variables.")
+# Safety checks
+if not BOT_TOKEN or not GEMINI_API_KEY or not CHANNEL_USERNAME:
+    logging.error("CRITICAL ERROR: BOT_TOKEN, GEMINI_API_KEY, or CHANNEL_USERNAME is missing from Railway variables!")
     sys.exit(1)
 
-if not GEMINI_API_KEY:
-    logging.error("CRITICAL ERROR: GEMINI_API_KEY is missing! Please add it to your Railway variables.")
-    sys.exit(1)
-
-# Initialize Telegram Bot and Dispatcher
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
-
-# Initialize Google Gen AI Client
 client = genai.Client(api_key=GEMINI_API_KEY)
+
+# Helper function to check if the user is in the channel
+async def check_subscription(user_id: int) -> bool:
+    try:
+        member = await bot.get_chat_member(chat_id=CHANNEL_USERNAME, user_id=user_id)
+        # Status 'left', 'kicked', or 'not_found' means they are not subscribed
+        return member.status in ["member", "administrator", "creator"]
+    except Exception as e:
+        logging.error(f"Could not check subscription: {e}")
+        return False
+
+# Generate an inline keyboard with a link to the channel
+def get_subscription_keyboard():
+    # Remove the '@' to create a valid t.me link
+    url = f"https://t.me/{CHANNEL_USERNAME.replace('@', '')}"
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Join Channel to Continue", url=url)]
+    ])
+    return keyboard
 
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
+    # Enforce channel join before welcoming
+    if not await check_subscription(message.from_user.id):
+        await message.answer(
+            "👋 Welcome! To use this bot and grade your essays, you must first join our channel. Please join using the button below, then send /start again.",
+            reply_markup=get_subscription_keyboard()
+        )
+        return
+
     await message.answer("Send me your Multilevel English Task 2 essay, and I will grade it according to the official criteria!")
 
 @dp.message()
 async def evaluate_essay(message: types.Message):
-    # Ignore non-text messages for now
+    # Enforce channel join before evaluating any text
+    if not await check_subscription(message.from_user.id):
+        await message.answer(
+            "You need to be subscribed to our channel to check essays. Please join and try again!",
+            reply_markup=get_subscription_keyboard()
+        )
+        return
+
     if not message.text:
         await message.answer("Please send me the text of your essay to evaluate.")
         return
 
     user_essay = message.text
-    
-    # Show the "typing..." indicator in Telegram
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
     
-    # The grading rubric based on Uzbekistan Multilevel English Exam criteria
     system_prompt = f"""
     You are an expert examiner for the Uzbekistan Multilevel English Exam. Grade the following Task 2 essay based strictly on the official assessment criteria.
 
@@ -85,25 +111,20 @@ async def evaluate_essay(message: types.Message):
     """
     
     try:
-        # Ask Gemini to grade the essay
         response = client.models.generate_content(
             model="gemini-3.5-flash", 
             contents=system_prompt,
         )
-        
-        # Send the feedback back to Telegram
         await message.reply(response.text)
         
     except Exception as e:
         logging.error(f"Error grading essay: {e}")
-        # Custom error handling for Gemini API high-demand spikes
         if "503" in str(e) or "demand" in str(e).lower():
             await message.reply("The AI grader is currently experiencing high demand. Please wait 60 seconds and try sending your essay again.")
         else:
             await message.reply("Sorry, I ran into an issue grading your essay. Please try again.")
 
 async def main():
-    # Start the bot using Long Polling
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
