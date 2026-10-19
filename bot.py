@@ -2,11 +2,11 @@ import asyncio
 import os
 import sys
 import logging
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
 from google import genai
-from youtubesearchpython import VideosSearch # <-- NEW: YouTube Search Library
+from youtubesearchpython import VideosSearch
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
@@ -48,6 +48,19 @@ def get_subscription_keyboard():
         [InlineKeyboardButton(text="Join Channel to Continue", url=url)]
     ])
 
+# --- NEW: The Large Grid Keyboard ---
+def get_main_keyboard():
+    keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📝 Grade Essay"), KeyboardButton(text="🗣 Speaking Strategies")],
+            [KeyboardButton(text="💬 Grammar Help"), KeyboardButton(text="🎥 Video Lessons")]
+        ],
+        resize_keyboard=True,
+        is_persistent=True, # Keeps the 4-square icon visible in the chat bar
+        input_field_placeholder="Choose an option or type a message..."
+    )
+    return keyboard
+
 @dp.message(Command("start"))
 async def send_welcome(message: types.Message):
     if not await check_subscription(message.from_user.id):
@@ -59,21 +72,36 @@ async def send_welcome(message: types.Message):
 
     await message.answer(
         "👋 Welcome to Multilevel Expert Bot!\n\n"
-        "Here is what I can do:\n"
-        "• 📝 Send an essay to grade it.\n"
-        "• 🗣 Ask for speaking samples or strategies.\n"
-        "• 💬 Ask any English grammar question!\n"
-        "• 🎥 Use /video [topic] to find YouTube lessons (e.g., /video IELTS speaking part 2)"
+        "Use the buttons below to navigate, or simply send me your essay or questions directly!",
+        reply_markup=get_main_keyboard() # Shows the large buttons to the user
     )
 
-# --- NEW YOUTUBE VIDEO SKILL ---
+# --- NEW: Catching Button Clicks ---
+@dp.message(F.text == "📝 Grade Essay")
+async def handle_essay_button(message: types.Message):
+    if not await check_subscription(message.from_user.id):
+        return
+    await message.answer("Please paste the full text of your essay below, and I will evaluate it against the official Multilevel criteria!")
+
+@dp.message(F.text == "💬 Grammar Help")
+async def handle_grammar_button(message: types.Message):
+    if not await check_subscription(message.from_user.id):
+        return
+    await message.answer("What English grammar concept are you struggling with? Type your question below and I will explain it.")
+
+@dp.message(F.text == "🎥 Video Lessons")
+async def handle_video_button(message: types.Message):
+    if not await check_subscription(message.from_user.id):
+        return
+    await message.answer("To search for a video lesson, type <code>/video</code> followed by your topic.\n\nExample: <code>/video IELTS Speaking Part 2</code>", parse_mode="HTML")
+
+# --- YOUTUBE VIDEO SKILL ---
 @dp.message(Command("video"))
 async def search_youtube(message: types.Message):
     if not await check_subscription(message.from_user.id):
         await message.answer("You must be subscribed to use the bot.", reply_markup=get_subscription_keyboard())
         return
 
-    # Extract the topic from the user's message (everything after /video)
     command_parts = message.text.split(maxsplit=1)
     if len(command_parts) < 2:
         await message.answer("Please tell me what to search for! Example: <code>/video English grammar tenses</code>", parse_mode="HTML")
@@ -83,7 +111,6 @@ async def search_youtube(message: types.Message):
     await bot.send_chat_action(chat_id=message.chat.id, action="typing")
 
     try:
-        # Search YouTube and grab the top 3 results
         videos_search = VideosSearch(search_query, limit=3)
         results = videos_search.result()['result']
         
@@ -91,7 +118,6 @@ async def search_youtube(message: types.Message):
             await message.answer(f"Sorry, I couldn't find any videos for '<b>{search_query}</b>'.", parse_mode="HTML")
             return
 
-        # Format the results cleanly using Telegram HTML
         response_text = f"🎥 <b>Top YouTube Videos for:</b> <i>{search_query}</i>\n\n"
         for vid in results:
             title = vid['title']
@@ -105,7 +131,7 @@ async def search_youtube(message: types.Message):
         logging.error(f"Error searching YouTube: {e}")
         await message.answer("Sorry, I ran into an issue searching YouTube. Please try again.")
 
-# --- ESSAY GRADING & CHAT SKILL ---
+# --- ESSAY GRADING & AI CHAT SKILL ---
 @dp.message()
 async def process_user_text(message: types.Message):
     if not await check_subscription(message.from_user.id):
@@ -164,7 +190,7 @@ async def process_user_text(message: types.Message):
     ▶️ [One actionable instruction for revision]
 
     MODE 2: SPEAKING SAMPLES AND STRATEGIES
-    If the user asks for speaking topics, speaking practice, or speaking exam strategies:
+    If the user asks for speaking topics, speaking practice, or speaking exam strategies (e.g., they click the "🗣 Speaking Strategies" button):
     - Pull samples and strategies ONLY from the provided REFERENCE DATA below.
     - Format response using standard Telegram HTML (<b> for bold, <i> for italics).
     
@@ -179,7 +205,6 @@ async def process_user_text(message: types.Message):
     {user_text}
     """
     try:
-        # NOTE: Updated to await client.aio to handle multiple students at exactly the same time
         response = await client.aio.models.generate_content(model="gemini-3.5-flash", contents=system_prompt)
         await message.reply(response.text, parse_mode="HTML")
     except Exception as e:
