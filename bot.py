@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from google import genai
 from youtubesearchpython import VideosSearch
-from github import Github
+from github import Github, Auth
 
 # Enable logging
 logging.basicConfig(level=logging.INFO)
@@ -30,7 +30,10 @@ if not all([BOT_TOKEN, GEMINI_API_KEY, CHANNEL_USERNAME, GITHUB_TOKEN, GITHUB_RE
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 client = genai.Client(api_key=GEMINI_API_KEY)
-gh = Github(GITHUB_TOKEN)
+
+# --- GITHUB DATABASE AUTH FIX ---
+auth = Auth.Token(GITHUB_TOKEN)
+gh = Github(auth=auth)
 repo = gh.get_repo(GITHUB_REPO)
 
 # Load custom study materials
